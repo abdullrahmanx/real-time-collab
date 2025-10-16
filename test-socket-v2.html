@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Socket.io Real-Time Collaboration Test</title>
+    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Segoe UI', Arial, sans-serif; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 20px; min-height: 100vh; }
+        .container { max-width: 1000px; margin: 0 auto; background: white; border-radius: 16px; box-shadow: 0 10px 40px rgba(0,0,0,0.2); padding: 30px; }
+        h1 { color: #2c3e50; margin-bottom: 10px; font-size: 28px; }
+        .subtitle { color: #7f8c8d; margin-bottom: 20px; font-size: 14px; }
+        .section { margin: 20px 0; padding: 20px; background: #f8f9fa; border-radius: 12px; border: 1px solid #e9ecef; }
+        .status { display: inline-block; padding: 8px 16px; border-radius: 25px; font-size: 14px; font-weight: 600; margin-bottom: 10px; }
+        .status.connected { background: #d4edda; color: #155724; border: 2px solid #28a745; }
+        .status.disconnected { background: #f8d7da; color: #721c24; border: 2px solid #dc3545; }
+        input, textarea, button { width: 100%; padding: 12px; margin: 8px 0; border: 2px solid #ddd; border-radius: 8px; font-size: 14px; transition: all 0.3s; }
+        input:focus, textarea:focus { border-color: #667eea; outline: none; }
+        button { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; border: none; cursor: pointer; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; }
+        button:hover { transform: translateY(-2px); box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4); }
+        button:disabled { background: #ccc; cursor: not-allowed; transform: none; }
+        button.danger { background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); }
+        button.success { background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%); }
+        textarea { height: 120px; font-family: 'Courier New', monospace; resize: vertical; }
+        .log { background: white; padding: 12px; margin: 8px 0; border-left: 4px solid #667eea; border-radius: 6px; font-size: 13px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
+        .log.success { border-color: #28a745; color: #155724; }
+        .log.error { border-color: #dc3545; color: #721c24; }
+        .log.info { border-color: #17a2b8; color: #0c5460; }
+        #logContainer { max-height: 300px; overflow-y: auto; background: #f8f9fa; padding: 10px; border-radius: 8px; }
+        .users-list { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 10px; min-height: 40px; }
+        .user-badge { padding: 8px 12px; border-radius: 25px; font-size: 12px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; font-weight: 600; display: flex; align-items: center; gap: 5px; }
+        .btn-group { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+        label { font-weight: 600; color: #495057; display: block; margin-bottom: 5px; font-size: 13px; }
+        .inline-btn { display: inline-block; width: auto; padding: 8px 16px; margin: 5px; font-size: 12px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🚀 Real-Time Collaboration Test</h1>
+        <p class="subtitle">Test your Socket.IO backend with all features</p>
+        
+        <div class="section">
+            <span id="status" class="status disconnected">⚫ Disconnected</span>
+        </div>
+
+        <div class="section">
+            <h3>🔐 Step 1: Connect to Server</h3>
+            <label>JWT Access Token:</label>
+            <input id="token" type="text" placeholder="Paste your JWT access token here">
+            <button onclick="connectToServer()">🔌 Connect to Server</button>
+        </div>
+
+        <div class="section">
+            <h3>📄 Step 2: Join a Document</h3>
+            <label>Document ID:</label>
+            <input id="docId" type="text" placeholder="Enter document ID">
+            <button onclick="joinDocument()" id="joinBtn" disabled>📥 Join Document</button>
+        </div>
+
+        <div class="section">
+            <h3>✏️ Step 3: Edit & Save</h3>
+            <label>Document Content:</label>
+            <textarea id="editor" placeholder="Start typing your content..." disabled></textarea>
+            <div class="btn-group">
+                <button onclick="saveDocument()" id="saveBtn" disabled class="success">💾 Save Document</button>
+                <button onclick="leaveDocument()" id="leaveBtn" disabled class="danger">🚪 Leave Document</button>
+            </div>
+        </div>
+
+        <div class="section">
+            <h3>👥 Active Users in Document</h3>
+            <div id="usersList" class="users-list">
+                <span style="color: #999;">No users yet...</span>
+            </div>
+        </div>
+
+        <div class="section">
+            <h3>📋 Event Log</h3>
+            <button onclick="clearLog()" class="inline-btn">🗑️ Clear Log</button>
+            <div id="logContainer"></div>
+        </div>
+    </div>
+
+    <script>
+        let socket = null;
+        let currentDocId = null;
+
+        function log(message, type = 'info') {
+            const logContainer = document.getElementById('logContainer');
+            const entry = document.createElement('div');
+            entry.className = `log ${type}`;
+            const time = new Date().toLocaleTimeString();
+            entry.textContent = `[${time}] ${message}`;
+            logContainer.insertBefore(entry, logContainer.firstChild);
+            console.log(message);
+        }
+
+        function clearLog() {
+            document.getElementById('logContainer').innerHTML = '';
+            log('Log cleared', 'info');
+        }
+
+        function updateStatus(connected) {
+            const status = document.getElementById('status');
+            if (connected) {
+                status.textContent = '🟢 Connected';
+                status.className = 'status connected';
+                document.getElementById('joinBtn').disabled = false;
+            } else {
+                status.textContent = '🔴 Disconnected';
+                status.className = 'status disconnected';
+                document.getElementById('joinBtn').disabled = true;
+                document.getElementById('editor').disabled = true;
+                document.getElementById('saveBtn').disabled = true;
+                document.getElementById('leaveBtn').disabled = true;
+            }
+        }
+
+        function updateUsersList(members) {
+            const usersList = document.getElementById('usersList');
+            if (!members || members.length === 0) {
+                usersList.innerHTML = '<span style="color: #999;">No users yet...</span>';
+                return;
+            }
+            usersList.innerHTML = members.map(user => 
+                `<div class="user-badge">👤 ${user.userName || 'Anonymous'}</div>`
+            ).join('');
+        }
+
+        function connectToServer() {
+            const token = document.getElementById('token').value.trim();
+            if (!token) {
+                alert('❌ Please enter your JWT token first!');
+                return;
+            }
+
+            log('🔄 Connecting to server...', 'info');
+            
+            socket = io('http://localhost:3000', {
+                auth: { token: token }
+            });
+
+            // Connection events
+            socket.on('connect', () => {
+                log('✅ Successfully connected to server!', 'success');
+                updateStatus(true);
+            });
+
+            socket.on('connect_error', (err) => {
+                log(`❌ Connection failed: ${err.message}`, 'error');
+                updateStatus(false);
+            });
+
+            socket.on('disconnect', () => {
+                log('🔴 Disconnected from server', 'error');
+                updateStatus(false);
+                updateUsersList([]);
+            });
+
+            // Document events
+            socket.on('document-members', (data) => {
+                log(`👥 ${data.members.length} users in document`, 'success');
+                updateUsersList(data.members);
+            });
+
+            socket.on('user-joined', (data) => {
+                log(`🟢 ${data.message}`, 'success');
+                updateUsersList(data.members);
+            });
+
+            socket.on('user-left', (data) => {
+                log(`🔴 ${data.message}`, 'info');
+                if (data.members) updateUsersList(data.members);
+            });
+
+            socket.on('edit', (data) => {
+                log(`✏️ ${data.userName} is editing`, 'info');
+                console.log('Edit data:', data);
+            });
+
+            socket.on('save-success', (data) => {
+                log(`💾 ${data.message} (v${data.version})`, 'success');
+            });
+
+            socket.on('document-saved', (data) => {
+                log(`📝 Document saved by ${data.savedBy} (v${data.version})`, 'success');
+            });
+
+            // Error handling
+            socket.on('error', (err) => {
+                log(`❌ Error: ${err.message}`, 'error');
+            });
+        }
+
+        function joinDocument() {
+            const docId = document.getElementById('docId').value.trim();
+            if (!docId) {
+                alert('❌ Please enter a document ID!');
+                return;
+            }
+            if (!socket) {
+                alert('❌ Please connect first!');
+                return;
+            }
+
+            currentDocId = docId;
+            socket.emit('join-document', {
+                documentId: docId,
+                userName: 'Test User',
+                userAvatar: null
+            });
+
+            log(`📄 Joining document ${docId}...`, 'info');
+            document.getElementById('editor').disabled = false;
+            document.getElementById('saveBtn').disabled = false;
+            document.getElementById('leaveBtn').disabled = false;
+        }
+
+        function saveDocument() {
+            if (!socket || !currentDocId) {
+                alert('❌ Please join a document first!');
+                return;
+            }
+
+            const content = document.getElementById('editor').value;
+            if (!content) {
+                alert('❌ Content cannot be empty!');
+                return;
+            }
+
+            socket.emit('save-document', {
+                documentId: currentDocId,
+                content: { text: content },
+                title: 'Test Document'
+            });
+
+            log('💾 Saving document...', 'info');
+        }
+
+        function leaveDocument() {
+            if (!socket || !currentDocId) {
+                return;
+            }
+
+            socket.emit('leave-document');
+            log('🚪 Left document', 'info');
+            
+            currentDocId = null;
+            document.getElementById('editor').value = '';
+            document.getElementById('editor').disabled = true;
+            document.getElementById('saveBtn').disabled = true;
+            document.getElementById('leaveBtn').disabled = true;
+            updateUsersList([]);
+        }
+
+        let editTimeout = null;
+        document.getElementById('editor').addEventListener('input', (e) => {
+            if (!socket || !currentDocId) return;
+
+            clearTimeout(editTimeout);
+            editTimeout = setTimeout(() => {
+                const content = e.target.value;
+                socket.emit('edit-document', {
+                    documentId: currentDocId,
+                    changes: { text: content },
+                    position: { line: 1, col: content.length },
+                    content: { text: content }
+                });
+            }, 500); 
+        });
+    </script>
+</body>
+</html>
