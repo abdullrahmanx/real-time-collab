@@ -8,7 +8,7 @@ import rateLimit from 'express-rate-limit';
 import mongoSanitize from 'express-mongo-sanitize';
 import hpp from 'hpp';
 import compression from 'compression';
-
+import xss from 'xss-clean'
 import authRoutes from './routes/authRoutes';
 import workspaceRoutes from './routes/workspaceRoutes';
 import documentRoutes from './routes/documentRoutes';
@@ -35,8 +35,9 @@ app.use(cors({
 
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+app.use(xss());
 app.use(hpp());
-app.use(mongoSanitize())
+app.use(mongoSanitize());
 app.use(compression());
 
 // Health check endpoint
